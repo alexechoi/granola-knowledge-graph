@@ -19,6 +19,14 @@ class ObjectCursor(Protocol):
         ...
 
 
+class ObjectRowsCursor(Protocol):
+    """Typed boundary for DB-API multi-row results."""
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        """Return all database rows."""
+        ...
+
+
 @dataclass(frozen=True)
 class Migration:
     """One packaged database migration."""
@@ -101,3 +109,8 @@ def table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
 def fetch_object_row(cursor: ObjectCursor) -> tuple[object, ...] | None:
     """Read one row through a runtime-checked object boundary."""
     return cursor.fetchone()
+
+
+def fetch_object_rows(cursor: ObjectRowsCursor) -> list[tuple[object, ...]]:
+    """Read rows through a runtime-checked object boundary."""
+    return cursor.fetchall()
