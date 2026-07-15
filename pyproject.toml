@@ -18,7 +18,10 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
-dependencies = []
+dependencies = [
+  "httpx>=0.28,<1",
+  "pydantic>=2.11,<3",
+]
 
 [project.urls]
 Homepage = "https://github.com/alexechoi/granola-knowledge-graph"
