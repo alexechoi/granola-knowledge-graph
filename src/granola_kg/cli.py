@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from granola_kg.config import RuntimeSettings, load_settings
 from granola_kg.database import initialize_database
+from granola_kg.explorer_server import DEFAULT_EXPLORER_PORT, run_explorer
 from granola_kg.granola_client import GranolaClient
 from granola_kg.installer import install_skill
 from granola_kg.llm_client import StructuredLlmClient
@@ -41,6 +42,8 @@ class CliNamespace(argparse.Namespace):
     depth: int
     skills_directory: Path | None
     force: bool
+    port: int
+    no_open: bool
 
     def __init__(self) -> None:
         """Initialize defaults used by commands that omit specific destinations."""
@@ -59,6 +62,8 @@ class CliNamespace(argparse.Namespace):
         self.depth = 2
         self.skills_directory = None
         self.force = False
+        self.port = DEFAULT_EXPLORER_PORT
+        self.no_open = False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,6 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("status", help="Show queue and watermark state")
 
+    explore = commands.add_parser("explore", help="Open the local graph explorer")
+    explore.add_argument("--port", type=int, default=DEFAULT_EXPLORER_PORT)
+    explore.add_argument("--no-open", action="store_true", help="Do not open a browser")
+
     search = commands.add_parser("search", help="Search evidence and entities")
     search.add_argument("query")
     search.add_argument("--type", dest="type_keys", action="append", default=[])
@@ -123,21 +132,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _dispatch(args: CliNamespace, settings: RuntimeSettings) -> int:
-    if args.command == "install":
-        destination = install_skill(args.skills_directory, force=args.force)
-        _print_json(
-            {
-                "skill": str(destination),
-                "mcp_command": "granola-kg-mcp",
-                "installed": True,
-            }
-        )
-        return 0
-    if args.command == "init":
-        connection = initialize_database(settings.database_path)
-        connection.close()
-        _print_json({"database": str(settings.database_path), "initialized": True})
-        return 0
+    if args.command in {"install", "init", "explore"}:
+        return _dispatch_setup(args, settings)
     if args.command in {"sync", "process"}:
         return _run_remote(args, settings, discover=args.command == "sync")
     connection = initialize_database(settings.database_path)
@@ -182,6 +178,28 @@ def _dispatch(args: CliNamespace, settings: RuntimeSettings) -> int:
             raise ValueError(msg)
     finally:
         connection.close()
+    return 0
+
+
+def _dispatch_setup(args: CliNamespace, settings: RuntimeSettings) -> int:
+    """Run installation, initialization, and explorer setup commands."""
+    if args.command == "install":
+        destination = install_skill(args.skills_directory, force=args.force)
+        _print_json(
+            {
+                "skill": str(destination),
+                "mcp_command": "granola-kg-mcp",
+                "installed": True,
+            }
+        )
+        return 0
+    if args.command == "init":
+        connection = initialize_database(settings.database_path)
+        connection.close()
+        _print_json({"database": str(settings.database_path), "initialized": True})
+        return 0
+    if args.command == "explore":
+        run_explorer(settings.database_path, args.port, open_browser=not args.no_open)
     return 0
 
 

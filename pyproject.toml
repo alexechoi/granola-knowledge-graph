@@ -51,6 +51,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 granola_kg = [
   "py.typed",
+  "explorer.html",
   "migrations/*.sql",
   "skill/granola-kg/*.md",
   "skill/granola-kg/agents/*.yaml",

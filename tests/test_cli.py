@@ -4,15 +4,28 @@ from pathlib import Path
 
 import pytest
 
-from granola_kg.cli import build_parser, main
+from granola_kg.cli import CliNamespace, build_parser, main
 from granola_kg.version import __version__
 
 ERROR_EXIT_CODE = 2
+CUSTOM_EXPLORER_PORT = 9000
 
 
 def test_parser_uses_public_command_name() -> None:
     """The installed command should retain its documented name."""
     assert build_parser().prog == "granola-kg"
+
+
+def test_parser_exposes_local_explorer_options() -> None:
+    """The explorer command should support a custom local port and headless launch."""
+    args = build_parser().parse_args(
+        ["explore", "--port", str(CUSTOM_EXPLORER_PORT), "--no-open"],
+        namespace=CliNamespace(),
+    )
+
+    assert args.command == "explore"
+    assert args.port == CUSTOM_EXPLORER_PORT
+    assert args.no_open is True
 
 
 def test_empty_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
