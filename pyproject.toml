@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "granola-knowledge-graph"
+version = "0.1.0"
+description = "Local-first knowledge graph for Granola meeting notes"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Alex Choi" }]
+keywords = ["granola", "knowledge-graph", "mcp", "local-first"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/alexechoi/granola-knowledge-graph"
+Repository = "https://github.com/alexechoi/granola-knowledge-graph"
+Issues = "https://github.com/alexechoi/granola-knowledge-graph/issues"
+
+[project.scripts]
+granola-kg = "granola_kg.cli:main"
+
+[dependency-groups]
+dev = [
+  "basedpyright>=1.31,<2",
+  "build>=1.3,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "ruff>=0.12,<1",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+granola_kg = ["py.typed"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "COM812",
+  "D203",
+  "D213",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.basedpyright]
+include = ["src", "scripts", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+reportAny = "error"
+reportExplicitAny = "error"
+reportUnknownArgumentType = "error"
+reportUnknownLambdaType = "error"
+reportUnknownMemberType = "error"
+reportUnknownParameterType = "error"
+reportUnknownVariableType = "error"
