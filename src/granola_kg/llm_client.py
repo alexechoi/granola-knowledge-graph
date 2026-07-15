@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from granola_kg.extraction_models import ExtractionResult, extraction_instructions
+from granola_kg.extraction_schema import extraction_json_schema
 
 
 class CompletionEnvelope(BaseModel):
@@ -79,7 +80,14 @@ class StructuredLlmClient:
         request_body: dict[str, object] = {
             "model": self._model,
             "temperature": 0,
-            "response_format": {"type": "json_object"},
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "granola_knowledge_graph_extraction",
+                    "strict": True,
+                    "schema": extraction_json_schema(),
+                },
+            },
             "messages": [
                 {"role": "system", "content": extraction_instructions()},
                 {"role": "user", "content": user_content},
@@ -93,6 +101,9 @@ class StructuredLlmClient:
             )
             response.raise_for_status()
             envelope = CompletionEnvelope.model_validate_json(response.text)
+        except httpx.HTTPStatusError as error:
+            msg = f"LLM completion request returned HTTP {error.response.status_code}"
+            raise StructuredLlmError(msg) from error
         except (httpx.HTTPError, ValidationError) as error:
             msg = "LLM completion request failed or returned an invalid envelope"
             raise StructuredLlmError(msg) from error
