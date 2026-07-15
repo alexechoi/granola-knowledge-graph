@@ -34,6 +34,7 @@ MACOS_NOTE = r"""
       "parent_folder_id": null
     }
   ],
+  "space_membership": [],
   "summary_text": "The budget review was successful.",
   "summary_markdown": "## Budget review",
   "transcript": [
@@ -87,6 +88,7 @@ def test_parses_desktop_note_shape() -> None:
     assert note.transcript is not None
     assert note.transcript[0].speaker.name == "Oat Benson"
     assert note.transcript[1].speaker.source == "speaker"
+    assert note.space_membership == []
 
 
 def test_parses_mobile_diarization_and_nullable_fields() -> None:

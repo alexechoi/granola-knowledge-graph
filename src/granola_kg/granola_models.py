@@ -82,6 +82,7 @@ class NoteDetail(NoteSummary):
     calendar_event: CalendarEvent | None
     attendees: list[User]
     folder_membership: list[Folder]
+    space_membership: list[dict[str, object]] = Field(default_factory=list)
     summary_text: str
     summary_markdown: str | None
     transcript: list[TranscriptSegment] | None
