@@ -28,7 +28,8 @@
     .node:hover circle,.node.active circle { stroke:var(--accent); stroke-width:4 }
     .node text { fill:#dce4df; font-size:11px; paint-order:stroke; stroke:#0d1311; stroke-width:4px; stroke-linejoin:round }
     .dim { opacity:.1 }
-    .empty { position:absolute; inset:0; display:grid; place-content:center; color:var(--muted); text-align:center }
+    .empty { position:absolute; inset:0; display:grid; place-content:center; color:var(--muted); text-align:center; pointer-events:none }
+    .empty[hidden] { display:none }
     aside { border-left:1px solid var(--line); background:var(--panel); padding:25px; overflow:auto }
     .eyebrow { color:var(--accent); text-transform:uppercase; letter-spacing:.12em; font-size:11px }
     h2 { font:500 25px/1.2 ui-sans-serif,system-ui,sans-serif; margin:10px 0 5px }
