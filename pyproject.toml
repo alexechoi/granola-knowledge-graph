@@ -31,6 +31,7 @@ Issues = "https://github.com/alexechoi/granola-knowledge-graph/issues"
 
 [project.scripts]
 granola-kg = "granola_kg.cli:main"
+granola-kg-mcp = "granola_kg.mcp_server:main"
 
 [dependency-groups]
 dev = [
