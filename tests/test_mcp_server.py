@@ -7,7 +7,7 @@ from granola_kg.database import initialize_database
 from granola_kg.graph_store import GraphStore
 from granola_kg.mcp_server import LocalGraphTools, create_server
 
-EXPECTED_TOOL_COUNT = 5
+EXPECTED_TOOL_COUNT = 6
 
 
 def test_local_tools_report_seeded_ontology_and_status(tmp_path: Path) -> None:
@@ -40,6 +40,7 @@ def test_server_registers_structured_read_only_tools(tmp_path: Path) -> None:
     assert names == {
         "search_knowledge",
         "get_entity",
+        "get_evidence",
         "traverse_graph",
         "list_entity_types",
         "ingestion_status",

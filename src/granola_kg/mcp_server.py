@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from mcp.server.fastmcp import FastMCP
 
 from granola_kg.config import load_settings
-from granola_kg.database import fetch_object_rows, initialize_database
+from granola_kg.database import fetch_object_row, fetch_object_rows, initialize_database
 from granola_kg.mcp_models import (
     CitationResponse,
     EntityResponse,
@@ -99,6 +99,38 @@ class LocalGraphTools:
         finally:
             connection.close()
 
+    def get_evidence(self, evidence_id: str) -> CitationResponse:
+        """Get one active transcript or summary unit with its Granola citation metadata."""
+        connection = initialize_database(self._database_path)
+        try:
+            row = fetch_object_row(
+                connection.execute(
+                    """
+                    SELECT ev.evidence_id, n.note_id, n.title, n.web_url, ev.content,
+                           ev.speaker_name, ev.started_at, ev.ended_at
+                    FROM evidence_units AS ev
+                    JOIN source_notes AS n ON n.note_id = ev.note_id
+                    WHERE ev.evidence_id = ? AND ev.is_active = 1 AND n.visibility = 'active'
+                    """,
+                    (evidence_id,),
+                )
+            )
+            if row is None:
+                msg = f"Unknown active evidence: {evidence_id}"
+                raise ValueError(msg)
+            return CitationResponse(
+                evidence_id=_text(row[0]),
+                note_id=_text(row[1]),
+                note_title=_optional_text(row[2]),
+                web_url=_optional_text(row[3]),
+                excerpt=_text(row[4]),
+                speaker_name=_optional_text(row[5]),
+                started_at=_optional_text(row[6]),
+                ended_at=_optional_text(row[7]),
+            )
+        finally:
+            connection.close()
+
     def traverse_graph(
         self, entity_id: str, max_depth: int = 2, limit: int = 100
     ) -> TraverseResponse:
@@ -172,6 +204,7 @@ def create_server(database_path: Path | None = None) -> FastMCP[None]:
     )
     server.add_tool(service.search_knowledge, structured_output=True)
     server.add_tool(service.get_entity, structured_output=True)
+    server.add_tool(service.get_evidence, structured_output=True)
     server.add_tool(service.traverse_graph, structured_output=True)
     server.add_tool(service.list_entity_types, structured_output=True)
     server.add_tool(service.ingestion_status, structured_output=True)
@@ -200,3 +233,7 @@ def _text(value: object) -> str:
         msg = "Database returned non-text ontology data"
         raise TypeError(msg)
     return value
+
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None

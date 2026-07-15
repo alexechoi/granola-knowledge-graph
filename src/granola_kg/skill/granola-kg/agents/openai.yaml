@@ -1,0 +1,4 @@
+interface:
+  display_name: "Granola Knowledge Graph"
+  short_description: "Query a local Granola meeting knowledge graph"
+  default_prompt: "Use $granola-kg to search my local meeting knowledge graph and cite the supporting notes."

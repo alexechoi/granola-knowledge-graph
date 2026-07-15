@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from granola_kg.config import RuntimeSettings, load_settings
 from granola_kg.database import initialize_database
 from granola_kg.granola_client import GranolaClient
+from granola_kg.installer import install_skill
 from granola_kg.llm_client import StructuredLlmClient
 from granola_kg.query_store import QueryStore
 from granola_kg.sync_engine import SyncEngine
@@ -38,6 +39,8 @@ class CliNamespace(argparse.Namespace):
     type_keys: list[str]
     entity_id: str
     depth: int
+    skills_directory: Path | None
+    force: bool
 
     def __init__(self) -> None:
         """Initialize defaults used by commands that omit specific destinations."""
@@ -54,6 +57,8 @@ class CliNamespace(argparse.Namespace):
         self.type_keys = []
         self.entity_id = ""
         self.depth = 2
+        self.skills_directory = None
+        self.force = False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", dest="database_path", type=Path, help="SQLite database path")
     commands = parser.add_subparsers(dest="command")
     commands.add_parser("init", help="Initialize the local database")
+
+    install = commands.add_parser("install", help="Install the packaged assistant skill")
+    install.add_argument("--skills-dir", dest="skills_directory", type=Path)
+    install.add_argument("--force", action="store_true")
 
     sync = commands.add_parser("sync", help="Discover and process changed Granola notes")
     sync.add_argument("--reconcile", action="store_true", help="Also hide disappeared notes")
@@ -114,6 +123,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _dispatch(args: CliNamespace, settings: RuntimeSettings) -> int:
+    if args.command == "install":
+        destination = install_skill(args.skills_directory, force=args.force)
+        _print_json(
+            {
+                "skill": str(destination),
+                "mcp_command": "granola-kg-mcp",
+                "installed": True,
+            }
+        )
+        return 0
     if args.command == "init":
         connection = initialize_database(settings.database_path)
         connection.close()
