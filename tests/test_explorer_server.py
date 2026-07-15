@@ -42,6 +42,8 @@ def test_serves_interactive_graph_and_entity_evidence(tmp_path: Path) -> None:
     assert "Drag to pan" in html.text
     assert "addEventListener('wheel'" in html.text
     assert 'id="reset-view"' in html.text
+    assert ".empty[hidden] { display:none }" in html.text
+    assert "pointer-events:none" in html.text
     assert overview.json()["nodes"] == [
         {"id": "meeting_test", "name": "Test Meeting", "type": "meeting"},
         {"id": "person_test", "name": "Test Person", "type": "person"},
