@@ -64,3 +64,15 @@ def test_reprocess_requires_exactly_one_target(
 
     assert main(["--db", str(database), "reprocess"]) == ERROR_EXIT_CODE
     assert "exactly one" in capsys.readouterr().err
+
+
+def test_install_command_copies_packaged_skill(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The distribution CLI should install its bundled assistant skill."""
+    skills = tmp_path / "skills"
+
+    assert main(["install", "--skills-dir", str(skills)]) == 0
+
+    assert (skills / "granola-kg" / "SKILL.md").is_file()
+    assert '"mcp_command": "granola-kg-mcp"' in capsys.readouterr().out
