@@ -44,7 +44,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-granola_kg = ["py.typed"]
+granola_kg = ["py.typed", "migrations/*.sql"]
 
 [tool.uv]
 package = true
