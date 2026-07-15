@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,7 +14,17 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
+GEMINI_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_PROMPT_VERSION = "v1"
+
+
+class LlmProvider(StrEnum):
+    """Supported OpenAI-compatible model endpoint families."""
+
+    OPENAI = "openai"
+    GEMINI = "gemini"
+    CUSTOM = "custom"
 
 
 @dataclass(frozen=True)
@@ -25,6 +36,7 @@ class RuntimeSettings:
     llm_model: str | None
     llm_base_url: str
     llm_api_key: str | None
+    llm_provider: LlmProvider
     prompt_version: str
 
     def require_remote(self) -> tuple[str, LlmConfig]:
@@ -34,6 +46,9 @@ class RuntimeSettings:
             raise ValueError(msg)
         if self.llm_model is None:
             msg = "Set GRANOLA_KG_LLM_MODEL before processing"
+            raise ValueError(msg)
+        if self.llm_provider is LlmProvider.GEMINI and self.llm_api_key is None:
+            msg = "Set GEMINI_API_KEY before processing with Gemini"
             raise ValueError(msg)
         return self.granola_api_key, LlmConfig(
             model=self.llm_model,
@@ -48,12 +63,15 @@ def load_settings(
 ) -> RuntimeSettings:
     """Resolve settings without persisting secrets to local files."""
     database_path = database_override or _database_path(environ)
+    provider = _llm_provider(environ)
+    model, base_url, api_key = _llm_values(provider, environ)
     return RuntimeSettings(
         database_path=database_path.expanduser(),
         granola_api_key=environ.get("GRANOLA_API_KEY") or None,
-        llm_model=environ.get("GRANOLA_KG_LLM_MODEL") or None,
-        llm_base_url=environ.get("GRANOLA_KG_LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
-        llm_api_key=environ.get("GRANOLA_KG_LLM_API_KEY") or environ.get("OPENAI_API_KEY") or None,
+        llm_model=model,
+        llm_base_url=base_url,
+        llm_api_key=api_key,
+        llm_provider=provider,
         prompt_version=environ.get("GRANOLA_KG_PROMPT_VERSION", DEFAULT_PROMPT_VERSION),
     )
 
@@ -66,3 +84,38 @@ def _database_path(environ: Mapping[str, str]) -> Path:
     if data_root:
         return Path(data_root) / "granola-kg" / "graph.db"
     return Path.home() / ".local" / "share" / "granola-kg" / "graph.db"
+
+
+def _llm_provider(environ: Mapping[str, str]) -> LlmProvider:
+    configured = environ.get("GRANOLA_KG_LLM_PROVIDER")
+    if configured:
+        try:
+            return LlmProvider(configured.casefold())
+        except ValueError as error:
+            choices = ", ".join(provider.value for provider in LlmProvider)
+            msg = f"GRANOLA_KG_LLM_PROVIDER must be one of: {choices}"
+            raise ValueError(msg) from error
+    if environ.get("GEMINI_API_KEY") and not environ.get("GRANOLA_KG_LLM_BASE_URL"):
+        return LlmProvider.GEMINI
+    if environ.get("GRANOLA_KG_LLM_BASE_URL"):
+        return LlmProvider.CUSTOM
+    return LlmProvider.OPENAI
+
+
+def _llm_values(
+    provider: LlmProvider, environ: Mapping[str, str]
+) -> tuple[str | None, str, str | None]:
+    configured_model = environ.get("GRANOLA_KG_LLM_MODEL") or None
+    configured_base_url = environ.get("GRANOLA_KG_LLM_BASE_URL") or None
+    configured_key = environ.get("GRANOLA_KG_LLM_API_KEY") or None
+    if provider is LlmProvider.GEMINI:
+        return (
+            configured_model or DEFAULT_GEMINI_MODEL,
+            configured_base_url or GEMINI_LLM_BASE_URL,
+            configured_key or environ.get("GEMINI_API_KEY") or None,
+        )
+    return (
+        configured_model,
+        configured_base_url or DEFAULT_LLM_BASE_URL,
+        configured_key or environ.get("OPENAI_API_KEY") or None,
+    )
