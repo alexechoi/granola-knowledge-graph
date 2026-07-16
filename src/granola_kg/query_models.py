@@ -10,6 +10,7 @@ class SearchResultKind(StrEnum):
     """Searchable graph object families."""
 
     ENTITY = "entity"
+    NOTE = "note"
     EVIDENCE = "evidence"
 
 

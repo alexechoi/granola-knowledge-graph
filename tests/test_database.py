@@ -10,12 +10,14 @@ from granola_kg.database import (
     table_exists,
 )
 
+LATEST_SCHEMA_VERSION = 2
+
 
 def test_initializes_complete_schema(tmp_path: Path) -> None:
     """A fresh database should contain graph, queue, and FTS tables."""
     connection = initialize_database(tmp_path / "graph.db")
     try:
-        assert schema_version(connection) == 1
+        assert schema_version(connection) == LATEST_SCHEMA_VERSION
         for table_name in (
             "source_notes",
             "evidence_units",
@@ -25,6 +27,7 @@ def test_initializes_complete_schema(tmp_path: Path) -> None:
             "processing_queue",
             "evidence_fts",
             "entity_fts",
+            "note_fts",
         ):
             assert table_exists(connection, table_name)
     finally:
@@ -36,8 +39,8 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     path = tmp_path / "graph.db"
     connection = initialize_database(path)
     try:
-        assert migrate_database(connection) == 1
-        assert schema_version(connection) == 1
+        assert migrate_database(connection) == LATEST_SCHEMA_VERSION
+        assert schema_version(connection) == LATEST_SCHEMA_VERSION
     finally:
         connection.close()
 
@@ -45,5 +48,5 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
 def test_packaged_migrations_are_ordered() -> None:
     """Migration discovery should be deterministic."""
     migrations = packaged_migrations()
-    assert [migration.version for migration in migrations] == [1]
+    assert [migration.version for migration in migrations] == [1, 2]
     assert migrations[0].name == "initial"

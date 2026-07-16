@@ -27,6 +27,8 @@ TRAVERSAL_ROW_SIZE = 7
 IDENTIFIER_ROW_SIZE = 2
 EVIDENCE_SEARCH_ROW_SIZE = 5
 ENTITY_SEARCH_ROW_SIZE = 4
+NOTE_SEARCH_ROW_SIZE = 4
+RANK_FUSION_OFFSET = 60
 
 
 def _text(value: object, label: str) -> str:
@@ -80,6 +82,14 @@ class QueryStore:
             (evidence_id, title, content),
         )
 
+    def index_note(self, note_id: str, title: str, summary: str) -> None:
+        """Replace one source note in the FTS index."""
+        self._connection.execute("DELETE FROM note_fts WHERE note_id = ?", (note_id,))
+        self._connection.execute(
+            "INSERT INTO note_fts(note_id, title, summary) VALUES (?, ?, ?)",
+            (note_id, title, summary),
+        )
+
     def index_entity(
         self,
         entity_id: str,
@@ -104,15 +114,15 @@ class QueryStore:
         type_keys: Sequence[str] = (),
         limit: int = 20,
     ) -> tuple[SearchResult, ...]:
-        """Search active evidence and canonical entities by literal tokens."""
+        """Search active notes, evidence, and canonical entities by literal tokens."""
         compiled = compile_fts_query(query)
         if not compiled:
             return ()
         bounded_limit = max(1, min(limit, MAX_QUERY_LIMIT))
-        evidence = self._search_evidence(compiled, bounded_limit)
+        evidence = self._search_evidence(f"content : ({compiled})", bounded_limit)
+        notes = self._search_notes(compiled, bounded_limit)
         entities = self._search_entities(compiled, type_keys, bounded_limit)
-        combined = sorted((*evidence, *entities), key=lambda result: result.score)
-        return tuple(combined[:bounded_limit])
+        return self._fuse_results(query, (entities, notes, evidence), bounded_limit)
 
     def get_entity(self, entity_id: str) -> EntityDetail | None:
         """Load canonical entity metadata and evidence-backed properties."""
@@ -256,6 +266,35 @@ class QueryStore:
             if len(row) == EVIDENCE_SEARCH_ROW_SIZE
         )
 
+    def _search_notes(self, compiled: str, limit: int) -> tuple[SearchResult, ...]:
+        rows = fetch_object_rows(
+            self._connection.execute(
+                """
+                SELECT f.note_id, COALESCE(n.title, 'Untitled meeting'),
+                       COALESCE(NULLIF(snippet(note_fts, 2, '[', ']', '…', 24), ''),
+                                n.title, 'Untitled meeting'),
+                       bm25(note_fts)
+                FROM note_fts AS f
+                JOIN source_notes AS n ON n.note_id = f.note_id
+                WHERE note_fts MATCH ? AND n.visibility = 'active'
+                ORDER BY bm25(note_fts) LIMIT ?
+                """,
+                (compiled, limit),
+            )
+        )
+        return tuple(
+            SearchResult(
+                kind=SearchResultKind.NOTE,
+                object_id=_text(row[0], "note ID"),
+                title=_text(row[1], "note title"),
+                snippet=_text(row[2], "note snippet"),
+                score=_number(row[3], "note score"),
+                note_id=_text(row[0], "note ID"),
+            )
+            for row in rows
+            if len(row) == NOTE_SEARCH_ROW_SIZE
+        )
+
     def _search_entities(
         self, compiled: str, type_keys: Sequence[str], limit: int
     ) -> tuple[SearchResult, ...]:
@@ -286,6 +325,32 @@ class QueryStore:
             for row in rows
             if len(row) == ENTITY_SEARCH_ROW_SIZE
         )
+
+    @staticmethod
+    def _fuse_results(
+        query: str,
+        streams: tuple[tuple[SearchResult, ...], ...],
+        limit: int,
+    ) -> tuple[SearchResult, ...]:
+        normalized_query = " ".join(query.casefold().split())
+        ranked: list[SearchResult] = []
+        for stream in streams:
+            for rank, result in enumerate(stream, start=1):
+                exact_boost = 1.0 if _normalized(result.title) == normalized_query else 0.0
+                score = exact_boost + 1.0 / (RANK_FUSION_OFFSET + rank)
+                ranked.append(
+                    SearchResult(
+                        kind=result.kind,
+                        object_id=result.object_id,
+                        title=result.title,
+                        snippet=result.snippet,
+                        score=score,
+                        type_key=result.type_key,
+                        note_id=result.note_id,
+                    )
+                )
+        ranked.sort(key=lambda result: (-result.score, result.kind.value, result.object_id))
+        return tuple(ranked[:limit])
 
     @staticmethod
     def _property_from_row(row: tuple[object, ...]) -> EntityProperty:
@@ -322,3 +387,7 @@ class QueryStore:
             depth=_integer(row[5], "traversal depth"),
             evidence_id=_text(row[6], "relationship evidence"),
         )
+
+
+def _normalized(value: str) -> str:
+    return " ".join(value.casefold().split())
