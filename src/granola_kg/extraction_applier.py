@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         ExtractionResult,
     )
     from granola_kg.granola_models import NoteDetail
+    from granola_kg.llm_client import TokenUsage
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class ExtractionApplier:
         *,
         prompt_version: str,
         model_name: str,
+        usage: TokenUsage | None = None,
     ) -> ApplyResult:
         """Validate and commit a complete graph replacement for one note."""
         run_id = str(uuid4())
@@ -81,8 +83,9 @@ class ExtractionApplier:
                 """
                 INSERT INTO extraction_runs(
                     run_id, note_id, prompt_version, model_name, ontology_revision,
-                    response_json, state, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'complete', CURRENT_TIMESTAMP)
+                    response_json, state, completed_at, input_tokens, output_tokens,
+                    cached_input_tokens, reasoning_tokens
+                ) VALUES (?, ?, ?, ?, ?, ?, 'complete', CURRENT_TIMESTAMP, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -91,6 +94,10 @@ class ExtractionApplier:
                     model_name,
                     revision,
                     extraction.model_dump_json(),
+                    usage.input_tokens if usage is not None else 0,
+                    usage.output_tokens if usage is not None else 0,
+                    usage.cached_input_tokens if usage is not None else 0,
+                    usage.reasoning_tokens if usage is not None else 0,
                 ),
             )
             self._connection.execute(

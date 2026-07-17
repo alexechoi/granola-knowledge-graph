@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from granola_kg.database import fetch_object_rows
+from granola_kg.database import fetch_object_row, fetch_object_rows
 from granola_kg.extraction_applier import ExtractionApplier
 from granola_kg.granola_models import ListNotesQuery
 from granola_kg.graph_store import GraphStore
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from datetime import datetime
 
-    from granola_kg.extraction_models import ExtractionResult
     from granola_kg.granola_models import NoteDetail, NoteSummary
+    from granola_kg.llm_client import ExtractionResponse
 
 
 class GranolaGateway(Protocol):
@@ -42,7 +42,7 @@ class GranolaGateway(Protocol):
 class ExtractionProvider(Protocol):
     """Structured model operation required by processing."""
 
-    def extract(self, *, title: str, evidence_json: str, ontology_json: str) -> ExtractionResult:
+    def extract(self, *, title: str, evidence_json: str, ontology_json: str) -> ExtractionResponse:
         """Return one validated graph extraction."""
         ...
 
@@ -62,6 +62,7 @@ class ProcessingReport:
     """Outcome of draining the local processing queue."""
 
     completed: int
+    skipped: int
     failed: int
     failed_note_ids: tuple[str, ...]
 
@@ -102,35 +103,51 @@ class SyncEngine:
         """Drain retryable jobs, retaining individual failures for later attempts."""
         self._state.recover_interrupted()
         completed = 0
+        skipped = 0
         failed_ids: list[str] = []
-        while limit is None or completed + len(failed_ids) < limit:
+        while limit is None or completed + skipped + len(failed_ids) < limit:
             item = self._state.claim_next(max_attempts=max_attempts)
             if item is None:
                 break
             try:
                 note = self._granola.get_note(item.note_id, include_transcript=True)
                 with self._connection:
-                    self._notes.materialize(note)
+                    materialized = self._notes.materialize(note)
                     GraphStore(self._connection).ensure_seed_ontology()
+                if not item.force_reprocess and self._already_processed(
+                    item.note_id, materialized.content_hash
+                ):
+                    self._state.complete(item.note_id)
+                    skipped += 1
+                    continue
                 evidence_json = self._evidence_json(item.note_id)
                 ontology_json = self._ontology_json()
-                extraction = self._extractor.extract(
+                response = self._extractor.extract(
                     title=note.title or "Untitled meeting",
                     evidence_json=evidence_json,
                     ontology_json=ontology_json,
                 )
                 ExtractionApplier(self._connection).apply(
                     note,
-                    extraction,
+                    response.extraction,
                     prompt_version=self._prompt_version,
                     model_name=self._model_name,
+                    usage=response.usage,
                 )
                 self._state.complete(item.note_id)
                 completed += 1
             except Exception as error:  # noqa: BLE001 - one bad job must not stop the queue.
                 self._state.fail(item.note_id, str(error))
                 failed_ids.append(item.note_id)
-        return ProcessingReport(completed, len(failed_ids), tuple(failed_ids))
+        return ProcessingReport(completed, skipped, len(failed_ids), tuple(failed_ids))
+
+    def _already_processed(self, note_id: str, content_hash: str) -> bool:
+        row = fetch_object_row(
+            self._connection.execute(
+                "SELECT processed_hash FROM source_notes WHERE note_id = ?", (note_id,)
+            )
+        )
+        return row is not None and len(row) == 1 and row[0] == content_hash
 
     def _discover(self, query: ListNotesQuery, *, reconcile: bool) -> DiscoveryReport:
         self._state.begin_sync()

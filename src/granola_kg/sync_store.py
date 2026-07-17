@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 DEFAULT_SOURCE_KEY = "granola"
 PAIR_ROW_SIZE = 2
-QUEUE_ROW_SIZE = 3
+QUEUE_ROW_SIZE = 4
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class QueueItem:
     note_id: str
     remote_updated_at: datetime
     attempts: int
+    force_reprocess: bool
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,7 @@ class SyncStore:
                     remote_updated_at = excluded.remote_updated_at,
                     state = 'pending',
                     attempts = 0,
+                    force_reprocess = 0,
                     last_error = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -167,7 +169,7 @@ class SyncStore:
             row = fetch_object_row(
                 self._connection.execute(
                     """
-                    SELECT note_id, remote_updated_at, attempts
+                    SELECT note_id, remote_updated_at, attempts, force_reprocess
                     FROM processing_queue
                     WHERE state IN ('pending', 'failed') AND attempts < ?
                     ORDER BY updated_at, queued_at, note_id
@@ -178,7 +180,7 @@ class SyncStore:
             )
             if row is None:
                 return None
-            note_id, remote_updated_at, attempts = _queue_values(row)
+            note_id, remote_updated_at, attempts, force_reprocess = _queue_values(row)
             self._connection.execute(
                 """
                 UPDATE processing_queue
@@ -188,7 +190,7 @@ class SyncStore:
                 """,
                 (note_id,),
             )
-        return QueueItem(note_id, remote_updated_at, attempts + 1)
+        return QueueItem(note_id, remote_updated_at, attempts + 1, force_reprocess)
 
     def complete(self, note_id: str) -> None:
         """Mark a claimed job complete."""
@@ -245,10 +247,12 @@ class SyncStore:
     def _queue_for_reprocessing(self, note_id: str, updated_at: str) -> None:
         self._connection.execute(
             """
-            INSERT INTO processing_queue(note_id, remote_updated_at, state, attempts, last_error)
-            VALUES (?, ?, 'pending', 0, NULL)
+            INSERT INTO processing_queue(
+                note_id, remote_updated_at, state, attempts, last_error, force_reprocess
+            ) VALUES (?, ?, 'pending', 0, NULL, 1)
             ON CONFLICT(note_id) DO UPDATE SET
                 state = 'pending', attempts = 0, last_error = NULL,
+                force_reprocess = 1,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (note_id, updated_at),
@@ -272,13 +276,14 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _queue_values(row: tuple[object, ...]) -> tuple[str, datetime, int]:
+def _queue_values(row: tuple[object, ...]) -> tuple[str, datetime, int, bool]:
     if (
         len(row) != QUEUE_ROW_SIZE
         or not isinstance(row[0], str)
         or not isinstance(row[1], str)
         or not isinstance(row[2], int)
+        or not isinstance(row[3], int)
     ):
         msg = "Database returned an invalid queue item"
         raise RuntimeError(msg)
-    return row[0], datetime.fromisoformat(row[1]), row[2]
+    return row[0], datetime.fromisoformat(row[1]), row[2], row[3] == 1

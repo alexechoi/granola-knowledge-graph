@@ -7,10 +7,13 @@ import pytest
 from granola_kg.config import (
     DEFAULT_GEMINI_MODEL,
     DEFAULT_LLM_BASE_URL,
+    DEFAULT_MAX_INPUT_TOKENS,
     GEMINI_LLM_BASE_URL,
     LlmProvider,
     load_settings,
 )
+
+CUSTOM_INPUT_BUDGET = 2048
 
 
 def test_uses_xdg_local_data_path(tmp_path: Path) -> None:
@@ -22,6 +25,7 @@ def test_uses_xdg_local_data_path(tmp_path: Path) -> None:
     assert settings.llm_base_url == DEFAULT_LLM_BASE_URL
     assert settings.llm_provider is LlmProvider.OPENAI
     assert settings.granola_api_key is None
+    assert settings.max_input_tokens == DEFAULT_MAX_INPUT_TOKENS
 
 
 def test_database_override_wins_over_environment(tmp_path: Path) -> None:
@@ -50,6 +54,16 @@ def test_builds_provider_neutral_remote_configuration() -> None:
     assert llm.model == "local-model"
     assert llm.base_url == "http://127.0.0.1:11434/v1"
     assert llm.api_key == "local-secret"
+
+
+def test_configures_positive_input_budget() -> None:
+    """The prompt budget should be configurable without silent coercion."""
+    settings = load_settings(environ={"GRANOLA_KG_MAX_INPUT_TOKENS": str(CUSTOM_INPUT_BUDGET)})
+
+    assert settings.max_input_tokens == CUSTOM_INPUT_BUDGET
+
+    with pytest.raises(ValueError, match="positive integer"):
+        load_settings(environ={"GRANOLA_KG_MAX_INPUT_TOKENS": "0"})
 
 
 def test_requires_model_after_granola_key() -> None:

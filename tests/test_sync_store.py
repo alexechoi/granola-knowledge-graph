@@ -96,6 +96,9 @@ def test_reprocess_resets_completed_job(tmp_path: Path) -> None:
     store.reprocess("not_1")
 
     assert store.counts() == QueueCounts(pending=1)
+    reprocessed = store.claim_next()
+    assert reprocessed is not None
+    assert reprocessed.force_reprocess is True
     with pytest.raises(ValueError, match="Unknown note"):
         store.reprocess("not_missing")
     connection.close()

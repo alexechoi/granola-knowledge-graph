@@ -14,6 +14,7 @@ from granola_kg.extraction_models import (
     OntologyProposal,
 )
 from granola_kg.granola_models import ListNotesQuery, NoteDetail, NoteSummary, User
+from granola_kg.llm_client import ExtractionResponse, TokenUsage
 from granola_kg.sync_engine import SyncEngine
 from granola_kg.sync_store import QueueCounts, SyncStore
 
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 BASE_TIME = datetime(2026, 7, 15, 9, tzinfo=UTC)
+EXPECTED_FORCED_CALLS = 2
 
 
 def summary(note_id: str, minute: int = 0) -> NoteSummary:
@@ -90,9 +92,11 @@ class FakeExtractor:
         """Optionally configure a deterministic provider failure."""
         self.fail = fail
         self.ontology_seen = False
+        self.calls = 0
 
-    def extract(self, *, title: str, evidence_json: str, ontology_json: str) -> ExtractionResult:
+    def extract(self, *, title: str, evidence_json: str, ontology_json: str) -> ExtractionResponse:
         """Return a meeting entity using the evidence ID embedded in the prompt."""
+        self.calls += 1
         if self.fail:
             msg = "model unavailable"
             raise RuntimeError(msg)
@@ -101,17 +105,20 @@ class FakeExtractor:
         if match is None:
             msg = "Evidence prompt had no ID"
             raise RuntimeError(msg)
-        return ExtractionResult(
-            ontology=OntologyProposal(),
-            entities=[
-                ExtractedEntity(
-                    local_id="meeting_1",
-                    type_key="meeting",
-                    name=title,
-                    identifiers=[ExtractedIdentifier(field_key="note_id", value="not_1")],
-                    evidence_ids=[match.group()],
-                )
-            ],
+        return ExtractionResponse(
+            ExtractionResult(
+                ontology=OntologyProposal(),
+                entities=[
+                    ExtractedEntity(
+                        local_id="meeting_1",
+                        type_key="meeting",
+                        name=title,
+                        identifiers=[ExtractedIdentifier(field_key="note_id", value="not_1")],
+                        evidence_ids=[match.group()],
+                    )
+                ],
+            ),
+            TokenUsage(120, 30, 40, 10),
         )
 
 
@@ -130,12 +137,48 @@ def test_incremental_discovery_and_processing(tmp_path: Path) -> None:
 
     assert discovery.enqueued == 1
     assert processing.completed == 1
+    assert processing.skipped == 0
     assert processing.failed == 0
     assert extractor.ontology_seen is True
     assert unchanged.enqueued == 0
     assert granola.queries[-1] is not None
     assert granola.queries[-1].updated_after == BASE_TIME
     assert SyncStore(connection).counts() == QueueCounts(complete=1)
+    usage = fetch_object_row(
+        connection.execute(
+            "SELECT input_tokens, output_tokens, cached_input_tokens, reasoning_tokens "
+            "FROM extraction_runs"
+        )
+    )
+    assert usage == (120, 30, 40, 10)
+    connection.close()
+
+
+def test_changed_remote_timestamp_skips_unchanged_content(tmp_path: Path) -> None:
+    """A redundant remote update must not trigger another model call."""
+    connection = initialize_database(tmp_path / "graph.db")
+    granola = FakeGranola([summary("not_1")])
+    extractor = FakeExtractor()
+    engine = SyncEngine(
+        connection, granola, extractor, prompt_version="v1", model_name="test-model"
+    )
+    engine.discover()
+    engine.process()
+    granola.summaries = [summary("not_1", 1)]
+
+    engine.discover()
+    report = engine.process()
+
+    assert report.completed == 0
+    assert report.skipped == 1
+    assert extractor.calls == 1
+
+    SyncStore(connection).reprocess("not_1")
+    forced = engine.process()
+
+    assert forced.completed == 1
+    assert forced.skipped == 0
+    assert extractor.calls == EXPECTED_FORCED_CALLS
     connection.close()
 
 

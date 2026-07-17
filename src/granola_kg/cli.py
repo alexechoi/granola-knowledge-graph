@@ -237,6 +237,7 @@ def _run_remote(args: CliNamespace, settings: RuntimeSettings, *, discover: bool
                 "discovery": discovery_json,
                 "processing": {
                     "completed": processed.completed,
+                    "skipped": processed.skipped,
                     "failed": processed.failed,
                     "failed_note_ids": list(processed.failed_note_ids),
                 },
