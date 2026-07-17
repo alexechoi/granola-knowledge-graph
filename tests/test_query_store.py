@@ -71,9 +71,8 @@ def make_graph(tmp_path: Path) -> tuple[GraphStore, QueryStore, sqlite3.Connecti
         (person.entity_id, meeting.entity_id),
     )
     queries = QueryStore(connection)
-    queries.index_evidence(
-        "ev_budget", "Quarterly budget", "Alex approved the quarterly yoghurt budget"
-    )
+    queries.index_evidence("ev_budget", "", "Alex approved the quarterly yoghurt budget")
+    queries.index_note("not_budget", "Quarterly budget", "Alex approved the budget")
     queries.index_entity(person.entity_id, "Alex Choi", "Alex", "Approver")
     queries.index_entity(meeting.entity_id, "Quarterly budget")
     return graph, queries, connection
@@ -98,12 +97,25 @@ def test_searches_evidence_and_entities(tmp_path: Path) -> None:
     results = queries.search("Alex")
     assert {result.kind for result in results} == {
         SearchResultKind.ENTITY,
+        SearchResultKind.NOTE,
         SearchResultKind.EVIDENCE,
     }
     detail = queries.get_entity(person.entity_id)
     assert detail is not None
     assert detail.identifiers == (("email", "alex@example.com"),)
     assert detail.properties[0].citation.note_id == "not_budget"
+
+
+def test_title_match_returns_note_without_false_evidence(tmp_path: Path) -> None:
+    """A meeting title must not be repeated as a hit for every evidence unit."""
+    _graph, queries, connection = make_graph(tmp_path)
+    connection.execute("UPDATE source_notes SET title = 'Zenning' WHERE note_id = 'not_budget'")
+    queries.index_note("not_budget", "Zenning", "Alex approved the budget")
+
+    results = queries.search("Zenning")
+
+    assert [result.kind for result in results] == [SearchResultKind.NOTE]
+    assert results[0].note_id == "not_budget"
 
 
 def test_traverses_relationships_in_both_directions(tmp_path: Path) -> None:

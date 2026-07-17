@@ -57,6 +57,10 @@ def test_materializes_metadata_evidence_and_fts(tmp_path: Path) -> None:
         connection.execute("SELECT evidence_id FROM evidence_fts WHERE evidence_fts MATCH 'Friday'")
     )
     assert len(fts_rows) == EXPECTED_EVIDENCE_COUNT
+    note_rows = fetch_object_rows(
+        connection.execute("SELECT note_id FROM note_fts WHERE note_fts MATCH 'Launch'")
+    )
+    assert note_rows == [("not_1",)]
     connection.close()
 
 
@@ -99,6 +103,7 @@ def test_reconciliation_hides_but_retains_missing_notes(tmp_path: Path) -> None:
     )
     evidence_count = fetch_object_row(connection.execute("SELECT COUNT(*) FROM evidence_units"))
     fts_count = fetch_object_row(connection.execute("SELECT COUNT(*) FROM evidence_fts"))
+    note_fts_count = fetch_object_row(connection.execute("SELECT COUNT(*) FROM note_fts"))
     assert hidden == 1
     assert visibility is not None
     assert visibility[0] == "hidden"
@@ -106,4 +111,6 @@ def test_reconciliation_hides_but_retains_missing_notes(tmp_path: Path) -> None:
     assert evidence_count[0] == EXPECTED_EVIDENCE_COUNT
     assert fts_count is not None
     assert fts_count[0] == 0
+    assert note_fts_count is not None
+    assert note_fts_count[0] == 0
     connection.close()

@@ -127,6 +127,7 @@ class NoteStore:
                 "(SELECT evidence_id FROM evidence_units WHERE note_id = ?)",
                 (note_id,),
             )
+            self._connection.execute("DELETE FROM note_fts WHERE note_id = ?", (note_id,))
         return len(missing)
 
     def _write_evidence(
@@ -176,10 +177,22 @@ class NoteStore:
         self._connection.execute(
             """
             INSERT INTO evidence_fts(evidence_id, title, content)
-            SELECT evidence_id, ?, content FROM evidence_units
+            SELECT evidence_id, '', content FROM evidence_units
             WHERE note_id = ? AND is_active = 1
             """,
-            (title, note_id),
+            (note_id,),
+        )
+        self._connection.execute("DELETE FROM note_fts WHERE note_id = ?", (note_id,))
+        self._connection.execute(
+            """
+            INSERT INTO note_fts(note_id, title, summary)
+            SELECT ?, ?, COALESCE((
+                SELECT content FROM evidence_units
+                WHERE note_id = ? AND unit_kind = 'summary' AND is_active = 1
+                ORDER BY unit_index LIMIT 1
+            ), '')
+            """,
+            (note_id, title, note_id),
         )
 
 
