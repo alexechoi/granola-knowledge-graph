@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from granola_kg.database import fetch_object_row, fetch_object_rows
+from granola_kg.database import fetch_object_row
 from granola_kg.extraction_applier import ExtractionApplier
 from granola_kg.granola_models import ListNotesQuery
 from granola_kg.graph_store import GraphStore
 from granola_kg.note_store import NoteStore
+from granola_kg.prompt_builder import PromptBuilder
 from granola_kg.sync_store import SyncStore
-
-EVIDENCE_ROW_SIZE = 6
-EVIDENCE_REQUIRED_TEXT_FIELDS = 3
-ENTITY_ONTOLOGY_ROW_SIZE = 7
-RELATION_ONTOLOGY_ROW_SIZE = 6
 
 if TYPE_CHECKING:
     import sqlite3
@@ -87,6 +82,7 @@ class SyncEngine:
         self._model_name = model_name
         self._state = SyncStore(connection)
         self._notes = NoteStore(connection)
+        self._prompts = PromptBuilder(connection)
 
     def discover(self, *, folder_id: str | None = None) -> DiscoveryReport:
         """Queue notes updated after the last fully completed discovery pass."""
@@ -120,10 +116,11 @@ class SyncEngine:
                     self._state.complete(item.note_id)
                     skipped += 1
                     continue
-                evidence_json = self._evidence_json(item.note_id)
-                ontology_json = self._ontology_json()
+                title = note.title or "Untitled meeting"
+                evidence_json = self._prompts.evidence_json(item.note_id, title)
+                ontology_json = self._prompts.ontology_json(f"{title} {note.summary_text}")
                 response = self._extractor.extract(
-                    title=note.title or "Untitled meeting",
+                    title=title,
                     evidence_json=evidence_json,
                     ontology_json=ontology_json,
                 )
@@ -172,96 +169,3 @@ class SyncEngine:
             self._state.fail_sync(str(error))
             raise
         return DiscoveryReport(discovered, enqueued, hidden, latest)
-
-    def _evidence_json(self, note_id: str) -> str:
-        rows = fetch_object_rows(
-            self._connection.execute(
-                """
-                SELECT evidence_id, unit_kind, content, speaker_name, started_at, ended_at
-                FROM evidence_units
-                WHERE note_id = ? AND is_active = 1
-                ORDER BY unit_kind, unit_index
-                """,
-                (note_id,),
-            )
-        )
-        evidence: list[dict[str, object]] = []
-        for row in rows:
-            if len(row) != EVIDENCE_ROW_SIZE or not all(
-                isinstance(row[index], str) for index in range(EVIDENCE_REQUIRED_TEXT_FIELDS)
-            ):
-                msg = "Database returned invalid evidence prompt data"
-                raise RuntimeError(msg)
-            evidence.append(
-                {
-                    "evidence_id": row[0],
-                    "kind": row[1],
-                    "content": row[2],
-                    "speaker_name": row[3],
-                    "started_at": row[4],
-                    "ended_at": row[5],
-                }
-            )
-        return json.dumps(evidence, separators=(",", ":"))
-
-    def _ontology_json(self) -> str:
-        entity_rows = fetch_object_rows(
-            self._connection.execute(
-                """
-                SELECT e.type_key, e.display_name, e.description, e.identity_scope,
-                       f.field_key, f.data_type, f.is_identifier
-                FROM entity_types AS e
-                LEFT JOIN field_definitions AS f ON f.type_key = e.type_key
-                ORDER BY e.type_key, f.field_key
-                """
-            )
-        )
-        relation_rows = fetch_object_rows(
-            self._connection.execute(
-                """
-                SELECT relation_key, display_name, description,
-                       source_type_key, target_type_key, is_directed
-                FROM relation_types ORDER BY relation_key
-                """
-            )
-        )
-        snapshot: dict[str, object] = {
-            "entity_type_fields": [_entity_ontology_record(row) for row in entity_rows],
-            "relation_types": [_relation_ontology_record(row) for row in relation_rows],
-        }
-        return json.dumps(snapshot, separators=(",", ":"))
-
-
-def _entity_ontology_record(row: tuple[object, ...]) -> dict[str, object]:
-    """Convert a joined entity/field row into named prompt data."""
-    if len(row) != ENTITY_ONTOLOGY_ROW_SIZE or not all(
-        isinstance(row[index], str) for index in range(4)
-    ):
-        msg = "Database returned invalid entity ontology prompt data"
-        raise RuntimeError(msg)
-    return {
-        "type_key": row[0],
-        "display_name": row[1],
-        "description": row[2],
-        "identity_scope": row[3],
-        "field_key": row[4],
-        "field_data_type": row[5],
-        "field_is_identifier": row[6],
-    }
-
-
-def _relation_ontology_record(row: tuple[object, ...]) -> dict[str, object]:
-    """Convert a relation row into named prompt data."""
-    if len(row) != RELATION_ONTOLOGY_ROW_SIZE or not all(
-        isinstance(row[index], str) for index in range(5)
-    ):
-        msg = "Database returned invalid relation ontology prompt data"
-        raise RuntimeError(msg)
-    return {
-        "relation_key": row[0],
-        "display_name": row[1],
-        "description": row[2],
-        "source_type_key": row[3],
-        "target_type_key": row[4],
-        "is_directed": row[5],
-    }

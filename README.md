@@ -112,6 +112,11 @@ The first sync discovers all accessible summarized notes and queues them by Gran
 Processing fetches transcripts only for claimed queue items, materializes their evidence, runs
 structured extraction, and applies the graph update transactionally.
 
+Extraction context is summary-first and locally bounded. The summary is always included first;
+transcript units are ranked against the title and summary, then added only within a fixed character
+budget. Seed and relevant ontology rows are likewise capped, so prompt size does not grow with the
+number of retained meetings or generated types.
+
 Later syncs request notes updated after the last safely completed discovery watermark. If a remote
 timestamp changes without changing the fetched content, processing completes the job without an
 LLM call. Failed and interrupted jobs remain retryable, while explicit `reprocess` commands bypass
@@ -156,7 +161,9 @@ Identity follows two scopes:
 
 Every property and edge carries an evidence ID pointing to an active summary or transcript unit.
 Ontology proposals cannot silently rename or redefine an existing key, and a failed extraction
-does not partially update the graph.
+does not partially update the graph. Common semantic equivalents such as `organization`,
+`organisation`, `business`, and `company` are recorded as type aliases and reuse one canonical
+type instead of fragmenting the graph.
 
 ## Querying from the CLI
 
