@@ -4,7 +4,12 @@ import sqlite3
 from pathlib import Path
 
 from granola_kg.database import initialize_database
-from granola_kg.graph_models import EntityCandidate, IdentifierCandidate
+from granola_kg.graph_models import (
+    EntityCandidate,
+    EntityTypeDefinition,
+    IdentifierCandidate,
+    IdentityScope,
+)
 from granola_kg.graph_store import GraphStore
 from granola_kg.query_models import SearchResultKind
 from granola_kg.query_store import QueryStore, compile_fts_query
@@ -116,6 +121,32 @@ def test_title_match_returns_note_without_false_evidence(tmp_path: Path) -> None
 
     assert [result.kind for result in results] == [SearchResultKind.NOTE]
     assert results[0].note_id == "not_budget"
+
+
+def test_same_label_entities_have_distinct_typed_groups(tmp_path: Path) -> None:
+    """Equal labels in legitimate graph roles must remain separate facets."""
+    graph, queries, _connection = make_graph(tmp_path)
+    revision = graph.create_revision("add Zenning facets")
+    for type_key in ("company", "product"):
+        graph.upsert_entity_type(
+            EntityTypeDefinition(
+                type_key,
+                type_key.title(),
+                f"A {type_key}.",
+                IdentityScope.GLOBAL,
+            ),
+            revision,
+        )
+        entity = graph.resolve_entity(EntityCandidate(type_key, "Zenning", "ev_budget"))
+        queries.index_entity(entity.entity_id, "Zenning")
+
+    results = queries.search("Zenning")
+    facets = {result.type_key: result.group_key for result in results}
+
+    assert facets == {
+        "company": "entity:company:zenning",
+        "product": "entity:product:zenning",
+    }
 
 
 def test_traverses_relationships_in_both_directions(tmp_path: Path) -> None:

@@ -19,6 +19,7 @@ class SearchItem(McpModel):
     title: str
     snippet: str
     score: float
+    group_key: str
     type_key: str | None
     note_id: str | None
 

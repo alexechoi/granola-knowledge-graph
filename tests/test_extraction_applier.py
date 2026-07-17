@@ -156,6 +156,43 @@ def test_reapplication_reuses_entities_and_facts(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_meeting_identity_comes_from_source_note(tmp_path: Path) -> None:
+    """Model-supplied meeting identifiers cannot override Granola metadata."""
+    connection, note, evidence_id = prepare_note(tmp_path)
+    extracted = extraction(evidence_id)
+    extracted.entities[0].identifiers = [
+        ExtractedIdentifier(field_key="note_id", value="model_hallucination")
+    ]
+
+    ExtractionApplier(connection).apply(
+        note, extracted, prompt_version="v1", model_name="test-model"
+    )
+
+    identifiers = connection.execute(
+        "SELECT raw_value FROM entity_identifiers WHERE field_key = 'note_id'"
+    ).fetchall()
+    assert identifiers == [("not_1",)]
+    connection.close()
+
+
+def test_source_meeting_exists_when_model_omits_it(tmp_path: Path) -> None:
+    """Meeting creation should not depend on model output."""
+    connection, note, evidence_id = prepare_note(tmp_path)
+    extracted = extraction(evidence_id)
+    extracted.entities = [extracted.entities[1]]
+    extracted.relations = []
+
+    ExtractionApplier(connection).apply(
+        note, extracted, prompt_version="v1", model_name="test-model"
+    )
+
+    meetings = connection.execute(
+        "SELECT canonical_name FROM entities WHERE type_key = 'meeting'"
+    ).fetchall()
+    assert meetings == [("Launch planning",)]
+    connection.close()
+
+
 def test_invalid_evidence_rolls_back_every_graph_change(tmp_path: Path) -> None:
     """Unknown citations should prevent partial ontology or entity writes."""
     connection = initialize_database(tmp_path / "graph.db")

@@ -23,6 +23,7 @@ class SearchResult:
     title: str
     snippet: str
     score: float
+    group_key: str
     type_key: str | None = None
     note_id: str | None = None
 
