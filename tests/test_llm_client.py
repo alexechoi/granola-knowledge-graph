@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 
-from granola_kg.llm_client import LlmConfig, StructuredLlmClient, StructuredLlmError
+from granola_kg.llm_client import LlmConfig, StructuredLlmClient, StructuredLlmError, TokenUsage
 from tests.test_extraction_models import VALID_RESULT
 
 
@@ -17,7 +17,15 @@ def test_extracts_from_compatible_chat_completion() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        envelope = {"choices": [{"message": {"content": VALID_RESULT}}]}
+        envelope = {
+            "choices": [{"message": {"content": VALID_RESULT}}],
+            "usage": {
+                "prompt_tokens": 120,
+                "completion_tokens": 30,
+                "prompt_tokens_details": {"cached_tokens": 40},
+                "completion_tokens_details": {"reasoning_tokens": 10},
+            },
+        }
         return httpx.Response(200, text=json.dumps(envelope), request=request)
 
     http_client = httpx.Client(
@@ -27,7 +35,8 @@ def test_extracts_from_compatible_chat_completion() -> None:
 
     result = client.extract(title="Planning", evidence_json="[]", ontology_json="{}")
 
-    assert result.entities[0].type_key == "meeting"
+    assert result.extraction.entities[0].type_key == "meeting"
+    assert result.usage == TokenUsage(120, 30, 40, 10)
     assert len(requests) == 1
     request_text = requests[0].content.decode()
     assert '"type": "json_schema"' in request_text
@@ -87,4 +96,25 @@ def test_reports_provider_status_without_response_content() -> None:
     with pytest.raises(StructuredLlmError, match="HTTP 400") as captured:
         client.extract(title="Planning", evidence_json="[]", ontology_json="{}")
     assert "sensitive" not in str(captured.value)
+    http_client.close()
+
+
+def test_rejects_request_over_estimated_input_budget() -> None:
+    """Oversized prompts should fail before any provider request."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    http_client = httpx.Client(
+        base_url="https://provider.test/v1", transport=httpx.MockTransport(handler)
+    )
+    client = StructuredLlmClient(
+        LlmConfig(model="local-model", max_input_tokens=1), client=http_client
+    )
+
+    with pytest.raises(StructuredLlmError, match="configured budget"):
+        client.extract(title="Planning", evidence_json="[]", ontology_json="{}")
+    assert requests == []
     http_client.close()

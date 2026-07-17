@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 
 import httpx
@@ -18,6 +19,27 @@ class CompletionEnvelope(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
 
     choices: list[CompletionChoice]
+    usage: CompletionUsage | None = None
+
+
+class CompletionTokenDetails(BaseModel):
+    """Optional provider token breakdown."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
+class CompletionUsage(BaseModel):
+    """OpenAI-compatible token usage fields."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    prompt_tokens_details: CompletionTokenDetails | None = None
+    completion_tokens_details: CompletionTokenDetails | None = None
 
 
 class CompletionMessage(BaseModel):
@@ -44,6 +66,25 @@ class LlmConfig:
     base_url: str = "https://api.openai.com/v1"
     api_key: str | None = None
     timeout_seconds: float = 120.0
+    max_input_tokens: int = 6500
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """Provider-reported usage retained with an extraction run."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class ExtractionResponse:
+    """Validated graph extraction and its provider telemetry."""
+
+    extraction: ExtractionResult
+    usage: TokenUsage
 
 
 class StructuredLlmError(RuntimeError):
@@ -58,6 +99,9 @@ class StructuredLlmClient:
         if not config.model:
             msg = "LLM model cannot be empty"
             raise ValueError(msg)
+        if config.max_input_tokens < 1:
+            msg = "LLM input token budget must be positive"
+            raise ValueError(msg)
         headers = {"Content-Type": "application/json"}
         if config.api_key is not None:
             headers["Authorization"] = f"Bearer {config.api_key}"
@@ -68,13 +112,14 @@ class StructuredLlmClient:
             timeout=config.timeout_seconds,
         )
         self._model = config.model
+        self._max_input_tokens = config.max_input_tokens
 
     def close(self) -> None:
         """Release an internally owned HTTP client."""
         if self._owns_client:
             self._client.close()
 
-    def extract(self, *, title: str, evidence_json: str, ontology_json: str) -> ExtractionResult:
+    def extract(self, *, title: str, evidence_json: str, ontology_json: str) -> ExtractionResponse:
         """Extract and validate ontology additions, entities, and relations."""
         user_content = _user_prompt(title, evidence_json, ontology_json)
         request_body: dict[str, object] = {
@@ -93,6 +138,13 @@ class StructuredLlmClient:
                 {"role": "user", "content": user_content},
             ],
         }
+        estimated_tokens = math.ceil(len(json.dumps(request_body, separators=(",", ":"))) / 4)
+        if estimated_tokens > self._max_input_tokens:
+            msg = (
+                f"LLM input exceeds configured budget: {estimated_tokens} estimated tokens "
+                f"> {self._max_input_tokens}"
+            )
+            raise StructuredLlmError(msg)
         try:
             response = self._client.post(
                 "/chat/completions",
@@ -111,10 +163,24 @@ class StructuredLlmClient:
             msg = "LLM completion did not contain message content"
             raise StructuredLlmError(msg)
         try:
-            return ExtractionResult.model_validate_json(envelope.choices[0].message.content)
+            extraction = ExtractionResult.model_validate_json(envelope.choices[0].message.content)
         except ValidationError as error:
             msg = "LLM completion did not match the extraction contract"
             raise StructuredLlmError(msg) from error
+        return ExtractionResponse(extraction, _token_usage(envelope.usage))
+
+
+def _token_usage(usage: CompletionUsage | None) -> TokenUsage:
+    if usage is None:
+        return TokenUsage()
+    prompt_details = usage.prompt_tokens_details or CompletionTokenDetails()
+    completion_details = usage.completion_tokens_details or CompletionTokenDetails()
+    return TokenUsage(
+        input_tokens=usage.prompt_tokens,
+        output_tokens=usage.completion_tokens,
+        cached_input_tokens=prompt_details.cached_tokens,
+        reasoning_tokens=completion_details.reasoning_tokens,
+    )
 
 
 def _user_prompt(title: str, evidence_json: str, ontology_json: str) -> str:

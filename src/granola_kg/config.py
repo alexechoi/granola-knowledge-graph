@@ -17,6 +17,7 @@ DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 GEMINI_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_PROMPT_VERSION = "v1"
+DEFAULT_MAX_INPUT_TOKENS = 6500
 
 
 class LlmProvider(StrEnum):
@@ -38,6 +39,7 @@ class RuntimeSettings:
     llm_api_key: str | None
     llm_provider: LlmProvider
     prompt_version: str
+    max_input_tokens: int
 
     def require_remote(self) -> tuple[str, LlmConfig]:
         """Return validated remote settings for sync or processing commands."""
@@ -54,6 +56,7 @@ class RuntimeSettings:
             model=self.llm_model,
             base_url=self.llm_base_url,
             api_key=self.llm_api_key,
+            max_input_tokens=self.max_input_tokens,
         )
 
 
@@ -73,6 +76,9 @@ def load_settings(
         llm_api_key=api_key,
         llm_provider=provider,
         prompt_version=environ.get("GRANOLA_KG_PROMPT_VERSION", DEFAULT_PROMPT_VERSION),
+        max_input_tokens=_positive_integer(
+            environ.get("GRANOLA_KG_MAX_INPUT_TOKENS"), DEFAULT_MAX_INPUT_TOKENS
+        ),
     )
 
 
@@ -119,3 +125,17 @@ def _llm_values(
         configured_base_url or DEFAULT_LLM_BASE_URL,
         configured_key or environ.get("OPENAI_API_KEY") or None,
     )
+
+
+def _positive_integer(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        msg = "GRANOLA_KG_MAX_INPUT_TOKENS must be a positive integer"
+        raise ValueError(msg) from error
+    if parsed < 1:
+        msg = "GRANOLA_KG_MAX_INPUT_TOKENS must be a positive integer"
+        raise ValueError(msg)
+    return parsed

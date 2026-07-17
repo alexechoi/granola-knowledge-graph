@@ -101,15 +101,21 @@ Supported provider values are `gemini`, `openai`, and `custom`. Explicit
 provider defaults. The extractor sends a strict JSON schema, so a compatible provider must
 support structured chat-completion responses.
 
+Set `GRANOLA_KG_MAX_INPUT_TOKENS` to change the preflight prompt budget (default `6500`). The
+client uses the provider-documented four-characters-per-token estimate and rejects oversized
+requests before sending them. Provider-reported input, output, cached, and reasoning tokens are
+stored with each extraction run.
+
 ## Incremental ingestion
 
 The first sync discovers all accessible summarized notes and queues them by Granola `not_` ID.
 Processing fetches transcripts only for claimed queue items, materializes their evidence, runs
 structured extraction, and applies the graph update transactionally.
 
-Later syncs request notes updated after the last safely completed discovery watermark. An
-unchanged note can appear at the timestamp boundary, but its remote update value prevents it from
-being queued again. Failed and interrupted jobs remain retryable.
+Later syncs request notes updated after the last safely completed discovery watermark. If a remote
+timestamp changes without changing the fetched content, processing completes the job without an
+LLM call. Failed and interrupted jobs remain retryable, while explicit `reprocess` commands bypass
+the content-hash skip.
 
 Useful workflows:
 
