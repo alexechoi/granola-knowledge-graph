@@ -69,13 +69,14 @@ class ExtractionApplier:
             materialized = self._notes.materialize(note)
             self._graph.ensure_seed_ontology()
             self._validate_evidence(extraction, set(materialized.evidence_ids))
-            revision = self._apply_ontology(note.id, extraction)
+            revision, type_aliases = self._apply_ontology(note.id, extraction)
             self._retire_note_facts(note.id)
             entity_ids = self._apply_entities(
                 note.id,
                 note.title or "Untitled meeting",
                 materialized.evidence_ids,
                 extraction,
+                type_aliases,
             )
             self._apply_relations(extraction, entity_ids)
             self._refresh_entity_indexes(note.id, set(entity_ids.values()))
@@ -111,44 +112,60 @@ class ExtractionApplier:
             )
         return ApplyResult(run_id, note.id, revision, tuple(dict.fromkeys(entity_ids.values())))
 
-    def _apply_ontology(self, note_id: str, extraction: ExtractionResult) -> int:
+    def _apply_ontology(
+        self, note_id: str, extraction: ExtractionResult
+    ) -> tuple[int, dict[str, str]]:
         proposal = extraction.ontology
         if not proposal.entity_types and not proposal.relation_types:
-            return self._current_revision()
+            return self._current_revision(), {}
         revision = self._graph.create_revision("automatic extraction", note_id)
+        aliases: dict[str, str] = {}
         for entity_type in proposal.entity_types:
-            self._graph.upsert_entity_type(
-                EntityTypeDefinition(
-                    key=entity_type.key,
-                    display_name=entity_type.display_name,
-                    description=entity_type.description,
-                    identity_scope=entity_type.identity_scope,
-                    fields=tuple(
-                        FieldDefinition(
-                            key=field.key,
-                            display_name=field.display_name,
-                            description=field.description,
-                            data_type=field.data_type,
-                            is_identifier=field.is_identifier,
-                        )
-                        for field in entity_type.fields
-                    ),
-                ),
-                revision,
+            fields = tuple(
+                FieldDefinition(
+                    key=field.key,
+                    display_name=field.display_name,
+                    description=field.description,
+                    data_type=field.data_type,
+                    is_identifier=field.is_identifier,
+                )
+                for field in entity_type.fields
             )
+            canonical_key = self._graph.equivalent_type_key(entity_type.key)
+            if canonical_key != entity_type.key:
+                aliases[entity_type.key] = canonical_key
+                self._graph.register_type_alias(entity_type.key, canonical_key, revision)
+                self._graph.upsert_type_fields(canonical_key, fields, revision)
+            else:
+                self._graph.upsert_entity_type(
+                    EntityTypeDefinition(
+                        key=entity_type.key,
+                        display_name=entity_type.display_name,
+                        description=entity_type.description,
+                        identity_scope=entity_type.identity_scope,
+                        fields=fields,
+                    ),
+                    revision,
+                )
         for relation in proposal.relation_types:
             self._graph.upsert_relation_type(
                 RelationTypeDefinition(
                     key=relation.key,
                     display_name=relation.display_name,
                     description=relation.description,
-                    source_type_key=relation.source_type_key,
-                    target_type_key=relation.target_type_key,
+                    source_type_key=aliases.get(
+                        relation.source_type_key,
+                        self._graph.equivalent_type_key(relation.source_type_key),
+                    ),
+                    target_type_key=aliases.get(
+                        relation.target_type_key,
+                        self._graph.equivalent_type_key(relation.target_type_key),
+                    ),
                     is_directed=relation.is_directed,
                 ),
                 revision,
             )
-        return revision
+        return revision, aliases
 
     def _apply_entities(
         self,
@@ -156,6 +173,7 @@ class ExtractionApplier:
         note_title: str,
         evidence_ids: tuple[str, ...],
         extraction: ExtractionResult,
+        type_aliases: dict[str, str],
     ) -> dict[str, str]:
         entity_ids: dict[str, str] = {}
         if evidence_ids:
@@ -169,14 +187,17 @@ class ExtractionApplier:
             )
             entity_ids["_source_meeting"] = meeting.entity_id
         for extracted in extraction.entities:
-            self._validate_entity_fields(extracted)
-            scope_note_id = (
-                note_id if self._identity_scope(extracted.type_key) is IdentityScope.NOTE else None
+            type_key = type_aliases.get(
+                extracted.type_key, self._graph.equivalent_type_key(extracted.type_key)
             )
-            name = note_title if extracted.type_key == "meeting" else extracted.name
+            self._validate_entity_fields(extracted, type_key)
+            scope_note_id = (
+                note_id if self._identity_scope(type_key) is IdentityScope.NOTE else None
+            )
+            name = note_title if type_key == "meeting" else extracted.name
             identifiers = (
                 (IdentifierCandidate("note_id", note_id),)
-                if extracted.type_key == "meeting"
+                if type_key == "meeting"
                 else tuple(
                     IdentifierCandidate(identifier.field_key, identifier.value)
                     for identifier in extracted.identifiers
@@ -186,7 +207,7 @@ class ExtractionApplier:
             for evidence_id in extracted.evidence_ids:
                 resolution = self._graph.resolve_entity(
                     EntityCandidate(
-                        type_key=extracted.type_key,
+                        type_key=type_key,
                         name=name,
                         evidence_id=evidence_id,
                         scope_note_id=scope_note_id,
@@ -258,7 +279,7 @@ class ExtractionApplier:
                 ),
             )
 
-    def _validate_entity_fields(self, entity: ExtractedEntity) -> None:
+    def _validate_entity_fields(self, entity: ExtractedEntity, type_key: str) -> None:
         for identifier in entity.identifiers:
             row = fetch_object_row(
                 self._connection.execute(
@@ -266,21 +287,21 @@ class ExtractionApplier:
                     SELECT is_identifier FROM field_definitions
                     WHERE type_key = ? AND field_key = ?
                     """,
-                    (entity.type_key, identifier.field_key),
+                    (type_key, identifier.field_key),
                 )
             )
             if row is None or not row or row[0] != 1:
-                msg = f"Unknown identifier field {entity.type_key}.{identifier.field_key}"
+                msg = f"Unknown identifier field {type_key}.{identifier.field_key}"
                 raise ExtractionIntegrityError(msg)
         for property_value in entity.properties:
             row = fetch_object_row(
                 self._connection.execute(
                     "SELECT 1 FROM field_definitions WHERE type_key = ? AND field_key = ?",
-                    (entity.type_key, property_value.field_key),
+                    (type_key, property_value.field_key),
                 )
             )
             if row is None:
-                msg = f"Unknown property field {entity.type_key}.{property_value.field_key}"
+                msg = f"Unknown property field {type_key}.{property_value.field_key}"
                 raise ExtractionIntegrityError(msg)
 
     def _validate_relation(self, relation_key: str, source_id: str, target_id: str) -> None:

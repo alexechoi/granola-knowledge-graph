@@ -19,7 +19,8 @@ from granola_kg.extraction_models import (
     ProposedRelationType,
 )
 from granola_kg.granola_models import NoteDetail
-from granola_kg.graph_models import FieldDataType, IdentityScope
+from granola_kg.graph_models import EntityTypeDefinition, FieldDataType, IdentityScope
+from granola_kg.graph_store import GraphStore
 from granola_kg.note_store import NoteStore
 from granola_kg.query_store import QueryStore
 
@@ -190,6 +191,52 @@ def test_source_meeting_exists_when_model_omits_it(tmp_path: Path) -> None:
         "SELECT canonical_name FROM entities WHERE type_key = 'meeting'"
     ).fetchall()
     assert meetings == [("Launch planning",)]
+    connection.close()
+
+
+def test_semantic_type_alias_reuses_existing_canonical_type(tmp_path: Path) -> None:
+    """An organization proposal should extend an existing company type."""
+    connection, note, evidence_id = prepare_note(tmp_path)
+    graph = GraphStore(connection)
+    graph.ensure_seed_ontology()
+    revision = graph.create_revision("existing company ontology")
+    graph.upsert_entity_type(
+        EntityTypeDefinition(
+            "company", "Company", "A commercial organization.", IdentityScope.GLOBAL
+        ),
+        revision,
+    )
+    extracted = ExtractionResult(
+        ontology=OntologyProposal(
+            entity_types=[
+                ProposedEntityType(
+                    key="organization",
+                    display_name="Organization",
+                    description="An organized group.",
+                    identity_scope=IdentityScope.GLOBAL,
+                )
+            ]
+        ),
+        entities=[
+            ExtractedEntity(
+                local_id="organization_1",
+                type_key="organization",
+                name="Zenning",
+                evidence_ids=[evidence_id],
+            )
+        ],
+    )
+
+    ExtractionApplier(connection).apply(
+        note, extracted, prompt_version="v1", model_name="test-model"
+    )
+
+    types = connection.execute("SELECT type_key FROM entities ORDER BY type_key").fetchall()
+    aliases = connection.execute(
+        "SELECT alias_key, canonical_type_key FROM entity_type_aliases"
+    ).fetchall()
+    assert types == [("company",), ("meeting",)]
+    assert aliases == [("organization", "company")]
     connection.close()
 
 

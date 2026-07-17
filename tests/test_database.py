@@ -10,7 +10,7 @@ from granola_kg.database import (
     table_exists,
 )
 
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 4
 
 
 def test_initializes_complete_schema(tmp_path: Path) -> None:
@@ -28,6 +28,7 @@ def test_initializes_complete_schema(tmp_path: Path) -> None:
             "evidence_fts",
             "entity_fts",
             "note_fts",
+            "entity_type_aliases",
         ):
             assert table_exists(connection, table_name)
     finally:
@@ -48,5 +49,5 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
 def test_packaged_migrations_are_ordered() -> None:
     """Migration discovery should be deterministic."""
     migrations = packaged_migrations()
-    assert [migration.version for migration in migrations] == [1, 2, 3]
+    assert [migration.version for migration in migrations] == [1, 2, 3, 4]
     assert migrations[0].name == "initial"

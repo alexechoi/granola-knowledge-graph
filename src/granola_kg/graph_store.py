@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 
 ENTITY_ROW_SIZE = 6
 NAME_MATCH_ROW_SIZE = 2
+TYPE_EQUIVALENCE_GROUPS = (
+    ("company", "organization", "organisation", "business"),
+    ("project", "initiative"),
+    ("topic", "subject"),
+)
 
 
 class IdentityConflictError(RuntimeError):
@@ -147,7 +152,13 @@ class GraphStore:
                 int(is_seed),
             ),
         )
-        for field in definition.fields:
+        self.upsert_type_fields(definition.key, definition.fields, revision)
+
+    def upsert_type_fields(
+        self, type_key: str, fields: tuple[FieldDefinition, ...], revision: int
+    ) -> None:
+        """Add fields to a canonical type without replacing its identity metadata."""
+        for field in fields:
             self._connection.execute(
                 """
                 INSERT INTO field_definitions(
@@ -159,7 +170,7 @@ class GraphStore:
                     description = excluded.description
                 """,
                 (
-                    definition.key,
+                    type_key,
                     field.key,
                     field.display_name,
                     field.description,
@@ -190,6 +201,42 @@ class GraphStore:
                 int(definition.is_directed),
                 revision,
             ),
+        )
+
+    def equivalent_type_key(self, type_key: str) -> str:
+        """Return an existing canonical key for a known semantic equivalent."""
+        row = fetch_object_row(
+            self._connection.execute(
+                "SELECT canonical_type_key FROM entity_type_aliases WHERE alias_key = ?",
+                (type_key,),
+            )
+        )
+        if row is not None and row:
+            return _required_text(row[0], "canonical entity type")
+        for group in TYPE_EQUIVALENCE_GROUPS:
+            if type_key not in group:
+                continue
+            for candidate in group:
+                existing = fetch_object_row(
+                    self._connection.execute(
+                        "SELECT 1 FROM entity_types WHERE type_key = ?", (candidate,)
+                    )
+                )
+                if existing is not None:
+                    return candidate
+        return type_key
+
+    def register_type_alias(self, alias_key: str, canonical_key: str, revision: int) -> None:
+        """Persist one automatically discovered semantic type alias."""
+        if alias_key == canonical_key:
+            return
+        self._connection.execute(
+            """
+            INSERT INTO entity_type_aliases(alias_key, canonical_type_key, created_revision)
+            VALUES (?, ?, ?)
+            ON CONFLICT(alias_key) DO NOTHING
+            """,
+            (alias_key, canonical_key, revision),
         )
 
     def resolve_entity(self, candidate: EntityCandidate) -> EntityResolution:
