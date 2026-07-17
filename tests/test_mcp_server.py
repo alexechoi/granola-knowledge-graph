@@ -46,3 +46,24 @@ def test_server_registers_structured_read_only_tools(tmp_path: Path) -> None:
         "ingestion_status",
     }
     assert all(tool.outputSchema is not None for tool in registered)
+
+
+def test_search_exposes_stable_group_key(tmp_path: Path) -> None:
+    """MCP clients should receive grouping metadata for typed facets."""
+    database = tmp_path / "graph.db"
+    connection = initialize_database(database)
+    connection.execute(
+        """
+        INSERT INTO source_notes(note_id, title, owner_email, created_at, updated_at)
+        VALUES ('not_1', 'Launch planning', 'owner@example.com', '2026-01-01', '2026-01-01')
+        """
+    )
+    connection.execute(
+        "INSERT INTO note_fts(note_id, title, summary) VALUES ('not_1', 'Launch planning', '')"
+    )
+    connection.commit()
+    connection.close()
+
+    result = LocalGraphTools(database).search_knowledge("Launch").results[0]
+
+    assert result.group_key == "note:not_1"

@@ -69,7 +69,12 @@ class ExtractionApplier:
             self._validate_evidence(extraction, set(materialized.evidence_ids))
             revision = self._apply_ontology(note.id, extraction)
             self._retire_note_facts(note.id)
-            entity_ids = self._apply_entities(note.id, extraction)
+            entity_ids = self._apply_entities(
+                note.id,
+                note.title or "Untitled meeting",
+                materialized.evidence_ids,
+                extraction,
+            )
             self._apply_relations(extraction, entity_ids)
             self._refresh_entity_indexes(note.id, set(entity_ids.values()))
             self._connection.execute(
@@ -97,7 +102,7 @@ class ExtractionApplier:
                 """,
                 (revision, note.id),
             )
-        return ApplyResult(run_id, note.id, revision, tuple(entity_ids.values()))
+        return ApplyResult(run_id, note.id, revision, tuple(dict.fromkeys(entity_ids.values())))
 
     def _apply_ontology(self, note_id: str, extraction: ExtractionResult) -> int:
         proposal = extraction.ontology
@@ -138,25 +143,47 @@ class ExtractionApplier:
             )
         return revision
 
-    def _apply_entities(self, note_id: str, extraction: ExtractionResult) -> dict[str, str]:
+    def _apply_entities(
+        self,
+        note_id: str,
+        note_title: str,
+        evidence_ids: tuple[str, ...],
+        extraction: ExtractionResult,
+    ) -> dict[str, str]:
         entity_ids: dict[str, str] = {}
+        if evidence_ids:
+            meeting = self._graph.resolve_entity(
+                EntityCandidate(
+                    "meeting",
+                    note_title,
+                    evidence_ids[0],
+                    identifiers=(IdentifierCandidate("note_id", note_id),),
+                )
+            )
+            entity_ids["_source_meeting"] = meeting.entity_id
         for extracted in extraction.entities:
             self._validate_entity_fields(extracted)
             scope_note_id = (
                 note_id if self._identity_scope(extracted.type_key) is IdentityScope.NOTE else None
+            )
+            name = note_title if extracted.type_key == "meeting" else extracted.name
+            identifiers = (
+                (IdentifierCandidate("note_id", note_id),)
+                if extracted.type_key == "meeting"
+                else tuple(
+                    IdentifierCandidate(identifier.field_key, identifier.value)
+                    for identifier in extracted.identifiers
+                )
             )
             resolved_id = ""
             for evidence_id in extracted.evidence_ids:
                 resolution = self._graph.resolve_entity(
                     EntityCandidate(
                         type_key=extracted.type_key,
-                        name=extracted.name,
+                        name=name,
                         evidence_id=evidence_id,
                         scope_note_id=scope_note_id,
-                        identifiers=tuple(
-                            IdentifierCandidate(identifier.field_key, identifier.value)
-                            for identifier in extracted.identifiers
-                        ),
+                        identifiers=identifiers,
                     )
                 )
                 if resolved_id and resolution.entity_id != resolved_id:

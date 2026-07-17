@@ -267,6 +267,7 @@ def _search_json(result: SearchResult) -> dict[str, object]:
         "title": result.title,
         "snippet": result.snippet,
         "score": result.score,
+        "group_key": result.group_key,
         "type_key": result.type_key,
         "note_id": result.note_id,
     }

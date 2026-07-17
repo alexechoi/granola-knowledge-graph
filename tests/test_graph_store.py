@@ -71,6 +71,61 @@ def test_resolves_global_person_by_email(tmp_path: Path) -> None:
     assert first.entity_id == second.entity_id
 
 
+def test_resolves_same_type_alias_without_cross_type_matching(tmp_path: Path) -> None:
+    """A learned alias should resolve within its entity type only."""
+    store, connection = make_store(tmp_path)
+    add_evidence(connection, tmp_path, "not_alias", "ev_alias")
+    first = store.resolve_entity(
+        EntityCandidate(
+            "person",
+            "Alex Choi",
+            "ev_alias",
+            identifiers=(IdentifierCandidate("email", "alex@example.com"),),
+        )
+    )
+    store.resolve_entity(
+        EntityCandidate(
+            "person",
+            "Alex",
+            "ev_alias",
+            identifiers=(IdentifierCandidate("email", "alex@example.com"),),
+        )
+    )
+
+    alias = store.resolve_entity(EntityCandidate("person", "Alex", "ev_alias"))
+
+    assert alias.entity_id == first.entity_id
+    assert alias.match_source == "exact_alias"
+
+
+def test_same_title_meetings_use_distinct_note_identities(tmp_path: Path) -> None:
+    """Granola note IDs must dominate ambiguous meeting titles."""
+    store, connection = make_store(tmp_path)
+    add_evidence(connection, tmp_path, "not_first", "ev_first")
+    add_evidence(connection, tmp_path, "not_second", "ev_second")
+
+    first = store.resolve_entity(
+        EntityCandidate(
+            "meeting",
+            "Weekly sync",
+            "ev_first",
+            identifiers=(IdentifierCandidate("note_id", "not_first"),),
+        )
+    )
+    second = store.resolve_entity(
+        EntityCandidate(
+            "meeting",
+            "Weekly sync",
+            "ev_second",
+            identifiers=(IdentifierCandidate("note_id", "not_second"),),
+        )
+    )
+
+    assert first.entity_id != second.entity_id
+    assert first.created is True
+    assert second.created is True
+
+
 def test_keeps_note_scoped_decisions_separate(tmp_path: Path) -> None:
     """An occurrence-like entity should only deduplicate inside its note."""
     store, connection = make_store(tmp_path)

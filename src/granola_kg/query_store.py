@@ -260,6 +260,7 @@ class QueryStore:
                 title=_optional_text(row[1]) or "Untitled meeting",
                 snippet=_text(row[2], "evidence snippet"),
                 score=_number(row[3], "evidence score"),
+                group_key=f"evidence:{_text(row[4], 'note ID')}",
                 note_id=_text(row[4], "note ID"),
             )
             for row in rows
@@ -289,6 +290,7 @@ class QueryStore:
                 title=_text(row[1], "note title"),
                 snippet=_text(row[2], "note snippet"),
                 score=_number(row[3], "note score"),
+                group_key=f"note:{_text(row[0], 'note ID')}",
                 note_id=_text(row[0], "note ID"),
             )
             for row in rows
@@ -320,6 +322,9 @@ class QueryStore:
                 title=_text(row[1], "entity name"),
                 snippet=_text(row[1], "entity name"),
                 score=_number(row[3], "entity score"),
+                group_key=_entity_group_key(
+                    _text(row[2], "entity type"), _text(row[1], "entity name")
+                ),
                 type_key=_text(row[2], "entity type"),
             )
             for row in rows
@@ -345,6 +350,7 @@ class QueryStore:
                         title=result.title,
                         snippet=result.snippet,
                         score=score,
+                        group_key=result.group_key,
                         type_key=result.type_key,
                         note_id=result.note_id,
                     )
@@ -391,3 +397,7 @@ class QueryStore:
 
 def _normalized(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _entity_group_key(type_key: str, title: str) -> str:
+    return f"entity:{type_key}:{_normalized(title)}"

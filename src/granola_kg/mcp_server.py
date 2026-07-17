@@ -54,6 +54,7 @@ class LocalGraphTools:
                         title=item.title,
                         snippet=item.snippet,
                         score=item.score,
+                        group_key=item.group_key,
                         type_key=item.type_key,
                         note_id=item.note_id,
                     )

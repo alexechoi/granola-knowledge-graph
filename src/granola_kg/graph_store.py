@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from granola_kg.database import fetch_object_row
 from granola_kg.graph_models import (
@@ -199,10 +199,14 @@ class GraphStore:
         identifier_match = self._identifier_match(candidate)
         if identifier_match is not None:
             return self._attach(candidate, identifier_match, "exact_identifier")
-        name_match = self._name_match(candidate, scope)
+        stable_meeting_id = self._stable_meeting_id(candidate)
+        name_match = None if stable_meeting_id is not None else self._name_match(candidate, scope)
         if name_match is not None:
             return self._attach(candidate, name_match, "exact_name")
-        entity_id = str(uuid4())
+        alias_match = None if stable_meeting_id is not None else self._alias_match(candidate, scope)
+        if alias_match is not None:
+            return self._attach(candidate, alias_match, "exact_alias")
+        entity_id = stable_meeting_id or str(uuid4())
         self._connection.execute(
             """
             INSERT INTO entities(
@@ -314,6 +318,37 @@ class GraphStore:
         if row is None or len(row) != NAME_MATCH_ROW_SIZE or row[0] != 1:
             return None
         return _required_text(row[1], "matched entity ID")
+
+    def _alias_match(self, candidate: EntityCandidate, scope: IdentityScope) -> str | None:
+        row = fetch_object_row(
+            self._connection.execute(
+                """
+                SELECT COUNT(DISTINCT e.entity_id), MIN(e.entity_id)
+                FROM entity_aliases AS a
+                JOIN entities AS e ON e.entity_id = a.entity_id
+                WHERE e.type_key = ? AND a.normalized_alias = ? AND e.status = 'active'
+                  AND ((? = 'global' AND e.scope_note_id IS NULL) OR e.scope_note_id = ?)
+                """,
+                (
+                    candidate.type_key,
+                    normalize_text(candidate.name),
+                    scope.value,
+                    candidate.scope_note_id,
+                ),
+            )
+        )
+        if row is None or len(row) != NAME_MATCH_ROW_SIZE or row[0] != 1:
+            return None
+        return _required_text(row[1], "alias-matched entity ID")
+
+    @staticmethod
+    def _stable_meeting_id(candidate: EntityCandidate) -> str | None:
+        if candidate.type_key != "meeting":
+            return None
+        for identifier in candidate.identifiers:
+            if identifier.field_key == "note_id":
+                return str(uuid5(NAMESPACE_URL, f"granola-note:{identifier.value.strip()}"))
+        return None
 
     def _attach(self, candidate: EntityCandidate, entity_id: str, source: str) -> EntityResolution:
         self._connection.execute(
